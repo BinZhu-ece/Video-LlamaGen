@@ -1,3 +1,14 @@
+
+dataset/Image_Datasets/civitai_v1_10000
+dataset/Image_Datasets/train
+dataset/Image_Datasets/useless
+dataset/Image_Datasets/civitai_v1_1940032.json
+dataset/__pycache__
+Causal-Video-VAE
+pretrained_models
+results
+cloud_path
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -64,7 +64,11 @@ class Text2ImgDataset(Dataset):
                     data = json.loads(line)
                     img_path = data['image_path']
                     code_dir = file_path.split('/')[-1].split('.')[0]
-                    img_path_list.append((img_path, code_dir, line_idx))
+                    # img_path_list.append((img_path, code_dir, line_idx))
+                    # the code_name of our dataset is not by line_idx
+                    code_name = img_path.split('/')[-1].split('.')[0]
+                    img_path_list.append((img_path, code_dir, code_name))
+                    
         self.img_path_list = img_path_list
         self.transform = transform
 
@@ -93,6 +97,7 @@ class Text2ImgDataset(Dataset):
         return img, t5_feat_padding, attn_mask, valid
 
     def __getitem__(self, index):
+        # import ipdb; ipdb.set_trace()
         img_path, code_dir, code_name = self.img_path_list[index]
         try:
             img = Image.open(img_path).convert("RGB")                
@@ -112,6 +117,7 @@ class Text2ImgDataset(Dataset):
             t5_file = t5_file.replace(self.t5_feat_path_base, self.short_t5_feat_path_base)
         
         t5_feat_padding = torch.zeros((1, self.t5_feature_max_len, self.t5_feature_dim))
+        assert os.path.isfile(t5_file)
         if os.path.isfile(t5_file):
             try:
                 t5_feat = torch.from_numpy(np.load(t5_file))

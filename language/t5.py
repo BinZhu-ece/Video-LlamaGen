@@ -29,6 +29,8 @@ class T5Embedder:
         self.cache_dir = cache_dir or os.path.expanduser('~/.cache/IF_')
         self.dir_or_name = dir_or_name
         tokenizer_path, path = dir_or_name, dir_or_name
+
+        # import ipdb; ipdb.set_trace()
         if local_cache:
             cache_dir = os.path.join(self.cache_dir, dir_or_name)
             tokenizer_path, path = cache_dir, cache_dir

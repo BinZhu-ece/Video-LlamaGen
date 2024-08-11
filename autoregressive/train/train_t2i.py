@@ -14,6 +14,9 @@ import time
 import argparse
 import os
 
+import sys
+sys.path.append("/storage/zhubin/LlamaGen/")
+
 from utils.distributed import init_distributed_mode
 from utils.logger import create_logger
 from dataset.build import build_dataset
@@ -162,6 +165,7 @@ def main(args):
             attn_mask = attn_mask.reshape(attn_mask.shape[0], 1, attn_mask.shape[-2], attn_mask.shape[-1]) # (bs, n_head, seq_len, seq_len)
             with torch.cuda.amp.autocast(dtype=ptdtype):  
                 _, loss = model(cond_idx=c_indices, idx=z_indices[:,:-1], targets=z_indices, mask=attn_mask[:, :, :-1,:-1], valid=valid)
+            print(loss)
             # backward pass, with gradient scaling if training in fp16         
             scaler.scale(loss).backward()
             if args.max_grad_norm != 0.0:
