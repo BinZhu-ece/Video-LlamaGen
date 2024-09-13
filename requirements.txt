@@ -1,1 +1,6 @@
-torch>=2.1.0
+# torch>=2.1.0
+# diffusers==0.28.0
+torchvision==0.18.1
+opencv-python
+# pytorch-lightning==2.2.1
+# pytorchvideo==0.1.5torchvision==0.18.1

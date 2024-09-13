@@ -26,10 +26,16 @@ class CustomDataset(Dataset):
         img_path_list = []
 
         # t5_file = os.path.join(self.t5_feat_path, code_dir, f"{code_name}.npy")
-        with open(file_path, 'r') as file:
-            for line_idx, line in enumerate(file):
-                data = json.loads(line)
-                img_path_list.append(data)
+        if file_path.endswith('.jsonl'):
+            with open(file_path, 'r') as file:
+                for line_idx, line in enumerate(file):
+                    data = json.loads(line)
+                    img_path_list.append(data)
+        elif file_path.endswith('.json'):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+
         self.img_path_list = img_path_list
         
 
@@ -100,7 +106,7 @@ def main(args):
     from tqdm import tqdm
     for caption, code_dir, code_name in tqdm(loader):
 
-        # import ipdb; ipdb.set_trace()
+        
         caption_embs, emb_masks = t5_xxl.get_text_embeddings(caption)
         valid_caption_embs = caption_embs[:, :emb_masks.sum()]
         x = valid_caption_embs.to(torch.float32).detach().cpu().numpy()

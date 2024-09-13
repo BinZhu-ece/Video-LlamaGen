@@ -21,12 +21,44 @@ from utils.distributed import init_distributed_mode
 from utils.logger import create_logger
 from dataset.build import build_dataset
 from dataset.augmentation import center_crop_arr
-from autoregressive.train.train_c2i import creat_optimizer
+# from autoregressive.train.train_c2i import creat_optimizer
 from autoregressive.models.gpt import GPT_models
 from tokenizer.tokenizer_image.vq_model import VQ_models
 
 
+import torch._dynamo
+torch._dynamo.config.suppress_errors = True
 
+
+import inspect
+#################################################################################
+#                             Training Helper Functions                         #
+#################################################################################
+def creat_optimizer(model, weight_decay, learning_rate, betas, logger):
+    # start with all of the candidate parameters
+    param_dict = {pn: p for pn, p in model.named_parameters()}
+    # filter out those that do not require grad
+    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+    # create optim groups. Any parameters that is 2D will be weight decayed, otherwise no.
+    # i.e. all weight tensors in matmuls + embeddings decay, all biases and layernorms don't.
+    decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+    nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+    optim_groups = [
+        {'params': decay_params, 'weight_decay': weight_decay},
+        {'params': nodecay_params, 'weight_decay': 0.0}
+    ]
+    num_decay_params = sum(p.numel() for p in decay_params)
+    num_nodecay_params = sum(p.numel() for p in nodecay_params)
+    logger.info(f"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters")
+    logger.info(f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters")
+    # Create AdamW optimizer and use the fused version if it is available
+    fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+    extra_args = dict(fused=True) if fused_available else dict()
+    optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
+    logger.info(f"using fused AdamW: {fused_available}")
+    return optimizer
+
+ 
 def main(args):
     assert torch.cuda.is_available(), "Training currently requires at least one GPU."
     
@@ -163,7 +195,12 @@ def main(args):
             c_indices = y.reshape(y.shape[0], y.shape[-2], y.shape[-1])
             assert z_indices.shape[0] == c_indices.shape[0]
             attn_mask = attn_mask.reshape(attn_mask.shape[0], 1, attn_mask.shape[-2], attn_mask.shape[-1]) # (bs, n_head, seq_len, seq_len)
-            with torch.cuda.amp.autocast(dtype=ptdtype):  
+            
+            # if dist.get_rank() == 0:
+            #     import ipdb;
+            #     ipdb.set_trace()
+            # _, loss = model(cond_idx=c_indices, idx=z_indices[:,:-1], targets=z_indices)
+            with torch.cuda.amp.autocast(dtype=ptdtype): 
                 _, loss = model(cond_idx=c_indices, idx=z_indices[:,:-1], targets=z_indices, mask=attn_mask[:, :, :-1,:-1], valid=valid)
             print(loss)
             # backward pass, with gradient scaling if training in fp16         

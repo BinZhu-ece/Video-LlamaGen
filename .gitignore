@@ -1,3 +1,23 @@
+torch-2.3.1+cu121-cp310-cp310-linux_x86_64.whl
+*.mp4
+*.npy
+*.pt
+*.json
+*.png
+useless
+rsync_map.py
+rsync_image.py
+jpg_to_mp4.py
+tmp
+sucai_subset
+results_*
+recap_datacomp_1b_data
+Lumen5
+.vscode
+*.zip
+*.ckpt 
+*.bin
+
 
 dataset/Image_Datasets/civitai_v1_10000
 dataset/Image_Datasets/train

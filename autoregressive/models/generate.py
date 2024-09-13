@@ -118,6 +118,7 @@ def decode_n_tokens(
             input_pos += 1
             new_tokens.append(next_token.clone())
             new_probs.append(next_prob.clone())
+            import ipdb; ipdb.set_trace()
             cur_token = next_token.view(-1, 1)
     
     return new_tokens, new_probs
@@ -134,7 +135,7 @@ def generate(model, cond, max_new_tokens, emb_masks=None, cfg_scale=1.0, cfg_int
         T = 1
     elif model.model_type == 't2i':
         if cfg_scale > 1.0:
-            cond_null = torch.zeros_like(cond) + model.cls_embedding.uncond_embedding
+            cond_null = torch.zeros_like(cond) + model.cls_embedding.uncond_embedding 
             cond_combined = torch.cat([cond, cond_null])
         else:
             cond_combined = cond
@@ -142,6 +143,7 @@ def generate(model, cond, max_new_tokens, emb_masks=None, cfg_scale=1.0, cfg_int
     else:
         raise Exception("please check model type")
 
+    # max_new_tokens = vae_t * (latent_size**2)
     T_new = T + max_new_tokens
     max_seq_length = T_new
     max_batch_size = cond.shape[0]
@@ -166,6 +168,8 @@ def generate(model, cond, max_new_tokens, emb_masks=None, cfg_scale=1.0, cfg_int
     seq = torch.empty((max_batch_size, T_new), dtype=torch.int, device=device)
 
     input_pos = torch.arange(0, T, device=device)
+
+    import ipdb; ipdb.set_trace()
     next_token = prefill(model, cond_combined, input_pos, cfg_scale, **sampling_kwargs)
     seq[:, T:T+1] = next_token
 

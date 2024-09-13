@@ -5,7 +5,11 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from PIL import Image 
-
+import sys
+current_file_path = os.path.abspath(__file__)
+current_directory = os.path.dirname(current_file_path)
+sys.path.append(os.path.join(current_directory, '..'))
+from dataset.augmentation import center_crop_arr
 
 class Text2ImgDatasetImg(Dataset):
     def __init__(self, lst_dir, face_lst_dir, transform):
@@ -108,9 +112,9 @@ class Text2ImgDataset(Dataset):
         if min(img.size) < self.image_size:
             img, t5_feat_padding, attn_mask, valid = self.dummy_data()
             return img, t5_feat_padding, attn_mask, torch.tensor(valid)
-
+        
         if self.transform is not None:
-            img = self.transform(img)
+            img = self.transform(img) # torch.Size([3, 256, 256])
         
         t5_file = os.path.join(self.t5_feat_path, code_dir, f"{code_name}.npy")
         if torch.rand(1) < 0.3:
@@ -118,10 +122,14 @@ class Text2ImgDataset(Dataset):
         
         t5_feat_padding = torch.zeros((1, self.t5_feature_max_len, self.t5_feature_dim))
         assert os.path.isfile(t5_file)
+
+        # import ipdb; ipdb.set_trace()
         if os.path.isfile(t5_file):
             try:
                 t5_feat = torch.from_numpy(np.load(t5_file))
                 t5_feat_len = t5_feat.shape[1] 
+                # if t5_feat_len<self.t5_feature_max_len:
+                #     import ipdb; ipdb.set_trace()
                 feat_len = min(self.t5_feature_max_len, t5_feat_len)
                 t5_feat_padding[:, -feat_len:] = t5_feat[:, :feat_len]
                 emb_mask = torch.zeros((self.t5_feature_max_len,))
@@ -156,3 +164,53 @@ def build_t2i(args, transform):
 
 def build_t2i_code(args):
     return Text2ImgDatasetCode(args)
+
+
+from torch.utils.data import DataLoader
+from torchvision import transforms
+import argparse
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    # dataset & dataloader
+    parser.add_argument("--dataset", type=str, required=True)
+    # parser.add_argument("--data", type=str, required='')
+    parser.add_argument("--video_meta_info_file", type=str, default='/storage/zhubin/liuyihang/add_aes/output/sucai_aes_1000.json')
+    # parser.add_argument("--sample_rate", type=int, default=1)
+    # parser.add_argument("--cache_dir", type=str, required='')
+    parser.add_argument("--t5-model-path", type=str, default='./pretrained_models/t5-ckpt')
+    parser.add_argument("--t5-model-type", type=str, default='flan-t5-xl')
+    parser.add_argument("--max_height", type=int, default=1)
+    parser.add_argument("--max_width", type=int, default=1)
+    parser.add_argument("--precision", type=str, default='bf16')
+    parser.add_argument("--model_max_length", type=int, default=512)
+    parser.add_argument("--start_frame_ind", type=int, default=25)
+    parser.add_argument("--num_frames", type=int, default=17)
+    parser.add_argument("--data_root", type=str, default='/storage/dataset')
+    parser.add_argument("--data-path", type=str, default='/storage/dataset')
+    parser.add_argument("--t5-feat-path", type=str, required=True)
+    parser.add_argument("--image-size", type=int, default=256)
+    parser.add_argument("--short-t5-feat-path", type=str, default=None, help="short caption of t5_feat_path")
+    parser.add_argument("--downsample-size", type=int, choices=[8, 16], default=16)
+    args = parser.parse_args()
+
+    
+    transform = transforms.Compose([
+        transforms.Lambda(lambda pil_image: center_crop_arr(pil_image, args.image_size)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5], inplace=True)
+    ])
+
+    # tokenizer = AutoTokenizer.from_pretrained("/storage/ongoing/new/Open-Sora-Plan/cache_dir/mt5-xxl", cache_dir=args.cache_dir)
+    assert os.path.exists(args.t5_model_path)
+    device='cuda'
+    precision = {'none': torch.float32, 'bf16': torch.bfloat16, 'fp16': torch.float16}[args.precision]
+
+    dataset = Text2ImgDataset(args, transform)
+    dataloader = DataLoader(dataset, batch_size=2, shuffle=True, num_workers=0)
+    for sample in dataloader:
+        print(sample)
+        # torch.Size([2, 3, 17, 480, 640]) torch.Size([2, 1, 512]) torch.Size([2, 1, 512])
+        # print(sample['video_data']['video'].shape, sample['video_data']['input_ids'].shape, sample['video_data']['cond_mask'].shape)
+    
+    

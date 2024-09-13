@@ -5,7 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Current File with Arguments",
+            "name": "Python Debugger: videovae",
             "type": "debugpy",
             "request": "launch",
             // "program": "${file}",
@@ -15,18 +15,89 @@
                 "CUDA_VISIBLE_DEVICES": "7"
             },
             "args": [
-                "--nnodes", "1",
-                "--nproc_per_node", "1",
-                "--master-port", "29501",
+                "--nnodes",
+                "1",
+                "--nproc_per_node",
+                "1",
+                "--master-port",
+                "29501",
+                "CausalVideoVAE/scripts/rec_causalvideo_vae.py",
+                "--batch_size",
+                "1",
+                "--real_video_dir",
+                "/storage/clh/gen/288/train/origin",
+                "--generated_video_dir",
+                "useless",
+                "--device",
+                "cuda",
+                "--sample_fps",
+                "24",
+                "--sample_rate",
+                "1",
+                "--num_frames",
+                "65",
+                "--resolution",
+                "720",
+                "--crop_size",
+                "720",
+                "--num_workers",
+                "8",
+                "--ckpt",
+                "/storage/lcm/Causal-Video-VAE/results/288_resume-lr1.00e-05-bs1-rs256-sr2-fr25/77",
+                "--output_origin",
+                "--enable_tiling"
+            ]
+        },
+        {
+            "name": "Python Debugger: train_t2i.py",
+            "type": "debugpy",
+            "request": "launch",
+            // "program": "${file}",
+            "console": "integratedTerminal",
+            "module": "torch.distributed.run",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "6"
+            },
+            "justMyCode": false,
+            "args": [
+                "--nnodes",
+                "1",
+                "--nproc_per_node",
+                "1",
+                "--master-port",
+                "29507",
                 "autoregressive/train/train_t2i.py",
-                "--vq-ckpt", "./pretrained_models/vq_ds16_t2i.pt",
-                "--data-path", "/storage/zhubin/LlamaGen/dataset/Image_Datasets",
-                "--t5-feat-path", "/path/to/laion_coco50M_flan_t5_xl",
-                "--dataset", "t2i",
-                "--image-size", "256",
-                "--cloud-save-path", "./cloud_path",
-                "--global-batch-size", "2"
+                "--vq-ckpt",
+                "./pretrained_models/vq_ds16_t2i.pt",
+                "--data-path",
+                "/storage/zhubin/LlamaGen/dataset/Image_Datasets",
+                "--t5-feat-path",
+                "/storage/zhubin/LlamaGen/dataset/Image_Datasets/",
+                "--dataset",
+                "t2i",
+                "--image-size",
+                "256",
+                "--cloud-save-path",
+                "./cloud_path",
+                "--global-batch-size",
+                "2"
             ],
-        }
+        },
+        {
+            "name": "Python: zjw",
+            "type": "python",
+            "request": "attach",
+            "listen": {
+                "host": "0.0.0.0",
+                "port": 6000
+            },
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}",
+                    "remoteRoot": "."
+                }
+            ],
+            "justMyCode": false
+        },
     ]
 }

@@ -94,7 +94,7 @@ class CaptionEmbedder(nn.Module):
         super().__init__()
         self.cap_proj = MLP(in_features=in_channels, hidden_features=hidden_size, out_features=hidden_size)
         self.register_buffer("uncond_embedding", nn.Parameter(torch.randn(token_num, in_channels) / in_channels ** 0.5))
-        self.uncond_prob = uncond_prob
+        self.uncond_prob = uncond_prob # 0.1
 
     def token_drop(self, caption, force_drop_ids=None):
         """
@@ -210,6 +210,7 @@ class Attention(nn.Module):
         mask: Optional[torch.Tensor] = None
     ):
         bsz, seqlen, _ = x.shape
+        
         kv_size = self.n_kv_head * self.head_dim
         xq, xk, xv = self.wqkv(x).split([self.dim, kv_size, kv_size], dim=-1)
 
@@ -241,6 +242,7 @@ class Attention(nn.Module):
         return output
 
 
+# no dropout in gpt
 class TransformerBlock(nn.Module):
     def __init__(self, config: ModelArgs, drop_path: float):
         super().__init__()
