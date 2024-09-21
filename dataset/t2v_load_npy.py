@@ -146,8 +146,6 @@ class T2V_dataset(Dataset):
         t5_feat_len = t5_feat.shape[1] 
         feat_len = min(self.t5_feature_max_len, t5_feat_len)
         
-        emb_mask = torch.zeros((self.t5_feature_max_len,))
-        emb_mask[-feat_len:] = 1
 
         # import ipdb; ipdb.set_trace()
         t5_feat_padding[:, -feat_len:] = t5_feat[:, :feat_len]

@@ -85,7 +85,8 @@ class ModelArgs:
 #################################################################################
 #                      Embedding Layers for Class Labels                        #
 #################################################################################
-class LabelEmbedder(nn.Module):
+class ClassEmbedder(nn.Module):
+    # clas sEmbedder(nn.Module):
     """
     Embeds class labels into vector representations. Also handles label dropout for classifier-free guidance.
     """
@@ -522,6 +523,8 @@ class Transformer(nn.Module):
         mask: Optional[torch.Tensor] = None,  # torch.Size([2, 16*16*1])
         cond_embed: Optional[torch.Tensor] = None,  # torch.Size([2, 120, 768])
         cfg: Optional[float] = 1.0,
+        temperature=1.0,
+        cfg_iter=1.0
     ):
 
         self.freqs_cis = self.freqs_cis.to(
@@ -554,8 +557,6 @@ class Transformer(nn.Module):
             # ).to(h.device)  # (bs, 1, seq, seq)
             # eye_matrix = torch.eye(causal_mask.size(1), causal_mask.size(1), device=device)
             # model.causal_mask[:] = model.causal_mask * (1 - eye_matrix) + eye_matrix
-
-        # import ipdb; ipdb.set_trace()
         # transformer blocks
         for layer in self.layers:
             h = layer(h, freqs_cis, input_pos, attn_mask)
@@ -563,23 +564,21 @@ class Transformer(nn.Module):
         # output layers
         h = self.norm(h)  # torch.Size([2, 376, 768])
 
-        return h[:, self.cls_token_num - 1 :]  # torch.Size([2, 257, 768])
-        # t2v
-        if self.training:
-            if video_latent is not None and cond_embed is not None:
-                pre_video_latents = h[:, self.cls_token_num - 1 :].contiguous()
-                # 有一个问题，就是到底是递归预测，还是双向可见预测
-                loss = self.forward_loss(
-                    z=pre_video_latents, target=targets_video, mask=visual_token_mask
-                )
-            else:
-                raise ValueError("Either video_latent or idx should be None")
+        # import ipdb; ipdb.set_trace()
+        # sampled_token_latent = self.diffloss.sample(
+        #     z, temperature, cfg_iter
+        # )  # torch.Size([2, 2048])
+        # if not cfg == 1.0:
+        #     sampled_token_latent, _ = sampled_token_latent.chunk(
+        #         2, dim=0
+        #     )  # Remove null class samples
+        #     mask_to_pred, _ = mask_to_pred.chunk(2, dim=0)
 
-            if save_train_video_latent:
-                return h, loss, pre_video_latents
-            return h, loss  # , h[:, self.cls_token_num - 1:]
-        else:
-            return h, None  # , h[:, self.cls_token_num - 1:]
+        # cur_tokens[mask_to_pred.nonzero(as_tuple=True)] = sampled_token_latent
+
+
+        return h[:, self.cls_token_num - 1 :]  # torch.Size([2, 257, 768])
+       
 
     def forward(
         self,
@@ -614,6 +613,7 @@ class Transformer(nn.Module):
             h = self.tok_dropout(token_embeddings)  # torch.Size([2, 1399, 768])
 
         else:
+            # import ipdb; ipdb.set_trace()
             if cond_embed is not None and video_latent is None:  # prefill in inference
                 token_embeddings = self.cls_embedding(cond_embed, train=self.training)[
                     :, : self.cls_token_num
@@ -642,24 +642,23 @@ class Transformer(nn.Module):
 
         # output layers
         h = self.norm(h)
-
+        
         # t2v
         if self.training:
+            pre_video_latents = h[:, self.cls_token_num - 1 :].contiguous()
             if video_latent is not None and cond_embed is not None:
-                pre_video_latents = h[:, self.cls_token_num - 1 :].contiguous()
-                # return h, torch.mean(pre_video_latents)  # , h[:, self.cls_token_num - 1:]   MAR: torch.Size([16384, 1024])  llamagen: torch.Size([10240, 768])  torch.Size([65536, 8])
-                # 有一个问题，就是到底是递归预测，还是双向可见预测
+                
                 loss = self.forward_loss(
                     z=pre_video_latents, target=targets_video, mask=visual_token_mask
                 )
             else:
                 raise ValueError("Either video_latent or idx should be None")
-
             if save_train_video_latent:
-                return h, loss, pre_video_latents
-            return h, loss  # , h[:, self.cls_token_num - 1:]
+                return pre_video_latents, loss, pre_video_latents
+            return pre_video_latents, loss  # , h[:, self.cls_token_num - 1:]
         else:
-            return h, None  # , h[:, self.cls_token_num - 1:]
+            pre_video_latents = h
+            return pre_video_latents, None  # , h[:, self.cls_token_num - 1:]
 
     def mask_by_order(self, mask_len, order, bsz, seq_len):
         masking = torch.zeros(bsz, seq_len).cuda()
@@ -681,6 +680,119 @@ class Transformer(nn.Module):
         orders = torch.Tensor(np.array(orders)).cuda().long()
         return orders
 
+    def sample_tokens2(
+        self,
+        bsz,
+        num_iter=64,
+        cfg=1.0,
+        cfg_schedule="linear",
+        cond_embed=None,
+        temperature=1.0,
+        attn_mask=None,
+        progress=False,
+    ):
+
+        assert cond_embed is not None, "cond_embed should be provided"
+        # init and sample generation orders
+        seq_len = int(self.grid_size**2 * self.vae_t)  # 16*16*1    32*32*1
+        mask = torch.ones(bsz, seq_len).cuda()  # (2, 256)  (2, 1024)
+        tokens = (
+            self.mask_token.repeat(
+                cond_embed.shape[0],
+                seq_len,
+                1,
+            )
+            .to(cond_embed.device)
+            .to(cond_embed.dtype)
+        )  # (N, token_num, in_channels)  torch.Size([2, 256, 2048])
+
+        # orders = self.sample_orders(bsz)  # torch.Size([2, 256])  torch.Size([bs, 1024])  
+        # orders
+        orders = []
+        for _ in range(bsz):
+            order = np.array(list(range(self.seq_len)))
+            # np.random.shuffle(order)
+            orders.append(order)
+        orders = torch.Tensor(np.array(orders)).cuda().long()
+
+
+        indices = list(range(num_iter))
+        if progress:
+            indices = tqdm(indices)
+        # generate latents
+        # import ipdb; ipdb.set_trace()
+        for step in tqdm(indices):
+            cur_tokens = tokens.clone()
+            # class embedding and CFG
+
+            cond_embeddings = self.cls_embedding(cond_embed, train=self.training)[
+                :, : self.cls_token_num
+            ]  # projection       torch.Size([2, 120, 2048])-->torch.Size([2, 120, 768])
+
+            if not cfg == 1.0:
+                # raise ValueError("cfg is not 1.0")
+                tokens = torch.cat([tokens, tokens], dim=0)
+                # class_embedding = torch.cat([class_embedding, self.fake_latent.repeat(bsz, 1)], dim=0)
+                cond_embeddings = torch.cat(
+                    [cond_embeddings, cond_embeddings], dim=0
+                )  # 对吗？
+                mask = torch.cat([mask, mask], dim=0)
+
+            # mae encoder
+            # x = self.forward_mae_encoder(tokens, mask, cond_embeddings)
+            # mae decoder
+            # z = self.forward_mae_decoder(x, mask)
+            z = self.forward_decoder(
+                video_latent=tokens[:, :-1],
+                mask=mask,
+                attn_mask=attn_mask,
+                cond_embed=cond_embeddings,
+            )
+
+            # mask ratio for the next round, following MaskGIT and MAGE.
+            mask_ratio = np.cos(math.pi / 2.0 * (step + 1) / num_iter)
+            mask_len = torch.Tensor([np.floor(self.seq_len * mask_ratio)]).cuda()
+
+            # masks out at least one for the next iteration
+            mask_len = torch.maximum(
+                torch.Tensor([1]).cuda(),
+                torch.minimum(torch.sum(mask, dim=-1, keepdims=True) - 1, mask_len),
+            )
+
+            # get masking for next iteration and locations to be predicted in this iteration
+            mask_next = self.mask_by_order(mask_len[0], orders, bsz, seq_len)
+            if step >= num_iter - 1:
+                mask_to_pred = mask[:bsz].bool()
+            else:
+                mask_to_pred = torch.logical_xor(mask[:bsz].bool(), mask_next.bool())
+            mask = mask_next
+            if not cfg == 1.0:
+                mask_to_pred = torch.cat([mask_to_pred, mask_to_pred], dim=0)
+
+            # sample token latents for this step
+            z = z[mask_to_pred.nonzero(as_tuple=True)]  # torch.Size([pred_nums, 768])
+            # cfg schedule follow Muse
+            if cfg_schedule == "linear":
+                cfg_iter = 1 + (cfg - 1) * (self.seq_len - mask_len[0]) / self.seq_len
+            elif cfg_schedule == "constant":
+                cfg_iter = cfg
+            else:
+                raise NotImplementedError
+
+            # import ipdb; ipdb.set_trace()
+            sampled_token_latent = self.diffloss.sample(
+                z, temperature, cfg_iter
+            )  # torch.Size([2, 2048])
+            if not cfg == 1.0:
+                sampled_token_latent, _ = sampled_token_latent.chunk(
+                    2, dim=0
+                )  # Remove null class samples
+                mask_to_pred, _ = mask_to_pred.chunk(2, dim=0)
+
+            cur_tokens[mask_to_pred.nonzero(as_tuple=True)] = sampled_token_latent
+            tokens = cur_tokens.clone()
+        return tokens
+
     def sample_tokens(
         self,
         bsz,
@@ -695,24 +807,11 @@ class Transformer(nn.Module):
 
         assert cond_embed is not None, "cond_embed should be provided"
         # init and sample generation orders
-        seq_len = int(self.grid_size**2 * self.vae_t)  # 16*16*1
-        mask = torch.ones(bsz, seq_len).cuda()  # (2, 256)
-        tokens = (
-            self.mask_token.repeat(
-                cond_embed.shape[0],
-                seq_len,
-                1,
-            )
-            .to(cond_embed.device)
-            .to(cond_embed.dtype)
-        )  # (N, token_num, in_channels)  torch.Size([2, 256, 2048])
+        seq_len = int(self.grid_size**2 * self.vae_t)  # 16*16*1    32*32*1 
 
-        orders = self.sample_orders(bsz)  # torch.Size([2, 256])
         indices = list(range(num_iter))
         if progress:
             indices = tqdm(indices)
-        # generate latents
-        # import ipdb; ipdb.set_trace()
         for step in tqdm(indices):
             cur_tokens = tokens.clone()
             # class embedding and CFG

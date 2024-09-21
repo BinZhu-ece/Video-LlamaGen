@@ -347,6 +347,7 @@ class Transformer(nn.Module):
             h = self.tok_dropout(token_embeddings)
             self.freqs_cis = self.freqs_cis.to(h.device)
         else:
+            import ipdb; ipdb.set_trace()
             if cond_idx is not None: # prefill in inference
                 token_embeddings = self.cls_embedding(cond_idx, train=self.training)[:,:self.cls_token_num]
             else: # decode_n_tokens(kv cache) in inference

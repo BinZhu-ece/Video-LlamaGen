@@ -78,19 +78,34 @@ def logits_to_probs(logits, temperature: float = 1.0, top_p: float=1.0, top_k: i
     return probs
 
 
-def prefill(model, cond_idx: torch.Tensor, input_pos: torch.Tensor, cfg_scale: float, **sampling_kwargs):
-    if cfg_scale > 1.0:
-        output_embeddings, loss = model(video_latent=None, cond_embed=cond_idx, input_pos=input_pos)
-        output_embeddings_combined = output_embeddings
-        cond_output_embeddings, uncond_output_embeddings = torch.split(output_embeddings_combined, len(output_embeddings_combined) // 2, dim=0)
-        output_embeddings = uncond_output_embeddings + (cond_output_embeddings - uncond_output_embeddings) * cfg_scale
-    else:
-        output_embeddings, _ = model(video_latent=None, cond_embed=cond_idx, input_pos=input_pos)
+def prefill(model, cond_idx: torch.Tensor, input_pos: torch.Tensor, cfg_scale: float, temperature=1.0, cfg_iter=1.0, **sampling_kwargs):
 
-    return sample(output_embeddings, **sampling_kwargs)
+    output_embeddings, _ = model(video_latent=None, cond_embed=cond_idx, input_pos=input_pos) # torch.Size([1, 1, 2048])
+    output_embeddings = output_embeddings[:,-1,:]
+    # import ipdb; ipdb.set_trace()
+    # bs, N, dim = output_embeddings.shape
+
+    # cfg_iter = 1 + (cfg - 1) * (self.seq_len - mask_len[0]) / self.seq_len
+    sampled_token_latent = model.diffloss.sample(
+               output_embeddings.view(-1, output_embeddings.shape[-1]), temperature, cfg_iter
+            )  # torch.Size([2, 2048])
+    
+    sampled_token_latent = sampled_token_latent.view(1, -1, sampled_token_latent.shape[-1])
+    # import ipdb; ipdb.set_trace()
+    return sampled_token_latent
+    # ================
+    # if cfg_scale > 1.0:
+    #     output_embeddings, loss = model(video_latent=None, cond_embed=cond_idx, input_pos=input_pos)
+    #     output_embeddings_combined = output_embeddings
+    #     cond_output_embeddings, uncond_output_embeddings = torch.split(output_embeddings_combined, len(output_embeddings_combined) // 2, dim=0)
+    #     output_embeddings = uncond_output_embeddings + (cond_output_embeddings - uncond_output_embeddings) * cfg_scale
+    # else:
+    #     output_embeddings, _ = model(video_latent=None, cond_embed=cond_idx, input_pos=input_pos)
+
+    # return sample(output_embeddings, **sampling_kwargs)
 
 
-def decode_one_token(model, x: torch.Tensor, input_pos: torch.Tensor, cfg_scale: float, cfg_flag: bool, **sampling_kwargs):
+def decode_one_token(model, x: torch.Tensor, input_pos: torch.Tensor, cfg_scale=1.0, cfg_flag=False, temperature=1.0, cfg_iter=1.0, **sampling_kwargs):
     
     # x: 是预测的当前token embedding, (bs, dim=2048)
     assert input_pos.shape[-1] == 1
@@ -108,24 +123,29 @@ def decode_one_token(model, x: torch.Tensor, input_pos: torch.Tensor, cfg_scale:
             output_embeddings = cond_output_embeddings
             # logits = cond_logits
     else:
+        # import ipdb; ipdb.set_trace()
         # logits, _ = model(idx = x, cond_idx=None, input_pos=input_pos)
         output_embeddings, _ = model(video_latent=x,
                                     cond_embed = None,
                                     input_pos=input_pos)
+        output_embeddings = output_embeddings[:,-1,:]
+        sampled_token_latent = model.diffloss.sample(
+               output_embeddings.view(-1, output_embeddings.shape[-1]), temperature, cfg_iter
+            )  # torch.Size([2, 2048])
+        sampled_token_latent = sampled_token_latent.view(1, -1, sampled_token_latent.shape[-1])
 
-    return sample(output_embeddings, **sampling_kwargs)
+    return sampled_token_latent
+    # return sample(sampled_token_latent, **sampling_kwargs)
 
-
+from tqdm import tqdm 
 def decode_n_tokens(
     model, cur_token: torch.Tensor, input_pos: torch.Tensor, num_new_tokens: int, 
     cfg_scale: float, cfg_interval: int,
     **sampling_kwargs):
 
-    new_tokens = []
-    # new_probs = []
+    new_tokens = [] # new_probs = []
     cfg_flag = True
-    # import ipdb; ipdb.set_trace()
-    for i in range(num_new_tokens):
+    for i in tqdm(range(num_new_tokens)):
         with torch.backends.cuda.sdp_kernel(enable_flash=False, enable_mem_efficient=False, enable_math=True): # Actually better for Inductor to codegen attention here
             if cfg_interval > -1 and i > cfg_interval:
                 cfg_flag = False
@@ -138,13 +158,29 @@ def decode_n_tokens(
                 import ipdb; ipdb.set_trace()
             input_pos += 1
             new_tokens.append(next_token.clone())
-            cur_token = next_token
-            # import ipdb; ipdb.set_trace()
-            # new_probs.append(next_prob.clone())   len(new_tokens)
-            # cur_token = next_token.view(-1, next_token.shape[-1]) ########
-    
+            cur_token = next_token    
     return new_tokens # , new_probs
 
+
+import torch
+
+def save_causal_mask(causal_mask, filename="causal_mask.png"):
+    # Move mask to CPU if it's on a different device
+    causal_mask = causal_mask.cpu().detach()
+    
+    # Select the first mask in the batch for visualization
+    mask_to_visualize = causal_mask[0]
+    
+    # Visualize using matplotlib
+    import matplotlib.pyplot as plt
+    plt.imshow(mask_to_visualize, cmap="gray")
+    plt.title("Causal Mask Visualization")
+    plt.colorbar()
+    
+    # Save the figure to the local file
+    plt.savefig(filename)
+    print(f"Mask saved as {filename}")
+    plt.close()
 
 @torch.no_grad()
 def generate(model, cond, max_new_tokens, emb_masks=None, cfg_scale=1.0, cfg_interval=-1, **sampling_kwargs):
@@ -164,40 +200,64 @@ def generate(model, cond, max_new_tokens, emb_masks=None, cfg_scale=1.0, cfg_int
     max_batch_size = cond.shape[0]
 
     device = cond.device
-    # with torch.device(device):
-    #     max_batch_size_cfg = max_batch_size * 2 if cfg_scale > 1.0 else max_batch_size
-    #     model.setup_caches(max_batch_size=max_batch_size_cfg, max_seq_length=max_seq_length, dtype=model.tok_embeddings.weight.dtype)
-    
-    # import ipdb; ipdb.set_trace()
-    if emb_masks is not None: # emb_masks: torch.Size([1, 120])
-        assert emb_masks.shape[0] == max_batch_size 
-        assert emb_masks.shape[-1] == T
-
+    with torch.device(device):
         max_batch_size_cfg = max_batch_size * 2 if cfg_scale > 1.0 else max_batch_size
-        causal_mask = torch.tril(
-            torch.ones(max_seq_length, max_seq_length, dtype=torch.bool)
-        ) # torch.Size([120+1*8*8, 120+1*8*8])
-        causal_mask = causal_mask.unsqueeze(0).repeat(
-            max_batch_size, 1, 1
-        ).to(emb_masks.device)  # (1, 120+1*8*8, 120+1*8*8)  
-        if cfg_scale > 1.0:
-            causal_mask[:, :, :T] = causal_mask[:, :, :T] * torch.cat([emb_masks, emb_masks]).unsqueeze(1)
-        else:
-            causal_mask[:, :, :T] = causal_mask[:, :, :T] * emb_masks.unsqueeze(1) # T:120    emb_masks.unsqueeze(1).shape   torch.Size([1, 1, 120])
-
-        eye_matrix = torch.eye(causal_mask.size(1), causal_mask.size(2), device=device)
-        causal_mask[:] = causal_mask * (1 - eye_matrix) + eye_matrix
+        model.setup_caches(max_batch_size=max_batch_size_cfg, max_seq_length=max_seq_length, dtype=model.tok_embeddings.weight.dtype)
     
-        attn_mask = causal_mask # torch.Size([1, 184, 184])
-        attn_mask = attn_mask.unsqueeze(1) # .repeat(1, model.num_layers, 1, 1)
+    if emb_masks is not None:
+        assert emb_masks.shape[0] == max_batch_size
+        assert emb_masks.shape[-1] == T
+        if cfg_scale > 1.0:
+            model.causal_mask[:, :, :T] = model.causal_mask[:, :, :T] * torch.cat([emb_masks, emb_masks]).unsqueeze(1)
+        else:
+            model.causal_mask[:, :, :T] = model.causal_mask[:, :, :T] * emb_masks.unsqueeze(1)
+
+        eye_matrix = torch.eye(model.causal_mask.size(1), model.causal_mask.size(2), device=device)
+        model.causal_mask[:] = model.causal_mask * (1 - eye_matrix) + eye_matrix
+    
+    # create an empty tensor of the expected final shape and fill in the current tokens
+    # seq = torch.empty((max_batch_size, T_new), dtype=torch.int, device=device)
+    seq_embedding = torch.empty((max_batch_size, T_new, model.config.vae_embed_dim), dtype=cond.dtype, device=device)
+    input_pos = torch.arange(0, T, device=device)
+    next_token_embedding = prefill(model, cond_combined, input_pos, cfg_scale, **sampling_kwargs)
+    seq_embedding[:, T:T+1] = next_token_embedding
+    input_pos = torch.tensor([T], device=device, dtype=torch.int)
+    generated_tokens_embedding  = decode_n_tokens(model, next_token_embedding, input_pos, max_new_tokens-1, cfg_scale, cfg_interval, **sampling_kwargs)
+    seq_embedding[:, T+1:] = torch.cat(generated_tokens_embedding, dim=1)
+
+    return seq_embedding[:, T:]
+
+
+    # if emb_masks is not None: # emb_masks: torch.Size([1, 120])
+    #     assert emb_masks.shape[0] == max_batch_size 
+    #     assert emb_masks.shape[-1] == T
+
+    #     max_batch_size_cfg = max_batch_size * 2 if cfg_scale > 1.0 else max_batch_size
+    #     causal_mask = torch.tril(
+    #         torch.ones(max_seq_length, max_seq_length, dtype=torch.bool)
+    #     ) # torch.Size([120+1*8*8, 120+1*8*8])  # torch.Size([120+1*32*32, 120+1*32*32]) 
+    #     causal_mask = causal_mask.unsqueeze(0).repeat(
+    #         max_batch_size, 1, 1
+    #     ).to(emb_masks.device)  # (1, 120+1*8*8, 120+1*8*8)  
+    #     if cfg_scale > 1.0:
+    #         causal_mask[:, :, :T] = causal_mask[:, :, :T] * torch.cat([emb_masks, emb_masks]).unsqueeze(1)
+    #     else:
+    #         causal_mask[:, :, :T] = causal_mask[:, :, :T] * emb_masks.unsqueeze(1) # T:120    emb_masks.unsqueeze(1).shape   torch.Size([1, 1, 120])
+
+    #     eye_matrix = torch.eye(causal_mask.size(1), causal_mask.size(2), device=device)
+    #     causal_mask[:] = causal_mask * (1 - eye_matrix) + eye_matrix
+    
+    #     attn_mask = causal_mask # torch.Size([1, 184, 184])
+    #     attn_mask = attn_mask.unsqueeze(1) # .repeat(1, model.num_layers, 1, 1)
     # create an empty tensor of the expected final shape and fill in the current tokens
     # seq_embedding = torch.empty((max_batch_size, T_new, cond.shape[-1]), dtype=cond.dtype, device=device)
-    model.eval()
-    generated_tokens_embedding = model.sample_tokens(
-                cond_combined.shape[0], num_iter=64, cfg=1.0, cfg_schedule="linear", 
-                cond_embed=cond_combined, temperature=1.0, attn_mask=attn_mask[:,:,:-1,:-1], progress=False
-            )
-    return generated_tokens_embedding
+    
+    # model.eval()
+    # generated_tokens_embedding = model.sample_tokens(
+    #             cond_combined.shape[0], num_iter=64, cfg=1.0, cfg_schedule="linear", 
+    #             cond_embed=cond_combined, temperature=1.0, attn_mask=attn_mask[:,:,:-1,:-1], progress=False
+    #         )
+    # return generated_tokens_embedding
     # input_pos = torch.arange(0, T, device=device)
     
     # next_token_embedding = prefill(model, cond_combined, input_pos, cfg_scale, **sampling_kwargs)

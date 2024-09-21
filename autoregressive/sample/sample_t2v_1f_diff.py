@@ -135,15 +135,17 @@ def main(args):
     # t5_file = '/storage/zhubin/LlamaGen/dataset/storage_datasets_npy/istock/videos_istock_coco/manga-or-comic-book-lines-animation-action-speed-effects-with-clouds-sun-rays-gm1299945277-392407375.npy'
     import glob
     t5_files = glob.glob(f'{args.sample_t5_dir}/*.npy')
-    
+    import random; random.shuffle(t5_files)
+
+    # import ipdb; ipdb.set_trace()
     for IDX, t5_file in enumerate(t5_files):
         assert os.path.isfile(t5_file), 't5_file {} does not exist!'.format(t5_file)
-        t5_feat = torch.from_numpy(np.load(t5_file))
-        t5_feat_len = t5_feat.shape[1] 
-        feat_len = min(120, t5_feat_len)
-        emb_mask = torch.zeros((120,))
-        emb_mask[-feat_len:] = 1
-        emb_mask = emb_mask.unsqueeze(0)
+        t5_feat = torch.from_numpy(np.load(t5_file)) # torch.Size([1, 1, 2048])
+        t5_feat_len = t5_feat.shape[1] # 1
+        feat_len = min(120, t5_feat_len) # 1
+        emb_mask = torch.zeros((120,)) # torch.Size([120])
+        emb_mask[-feat_len:] = 1 # pad是0, word是1
+        emb_mask = emb_mask.unsqueeze(0) # (1, 120)
         # import ipdb; ipdb.set_trace()
         t5_feat_padding = torch.zeros((1, 120, t5_feat.shape[-1]))
         t5_feat_padding[:, -feat_len:] = t5_feat[:, :feat_len]
@@ -161,8 +163,10 @@ def main(args):
             gpt_model, c_indices, vae_t * (latent_size ** 2), 
             c_emb_masks, 
             cfg_scale=args.cfg_scale,
-            temperature=args.temperature, top_k=args.top_k,
-            top_p=args.top_p, sample_logits=True, 
+            temperature=args.temperature, 
+            cfg_iter=args.cfg_iter,
+            # top_k=args.top_k,
+            # top_p=args.top_p, sample_logits=True, 
             )
         
         # import ipdb; ipdb.set_trace()
@@ -242,6 +246,8 @@ if __name__ == "__main__":
     parser.add_argument("--t-downsample-size", type=int, choices=[4, 8], default=4)
     parser.add_argument("--sample_t5_dir", type=str, default='/storage/zhubin/LlamaGen/dataset/storage_datasets_npy/istock/videos_istock_coco')
     
+
+    parser.add_argument("--cfg_iter", type=int, default=1, help="temperature value to sample with")
     # parser.add_argument("--precision", type=str, default='bf16')
     # 
     args = parser.parse_args()
