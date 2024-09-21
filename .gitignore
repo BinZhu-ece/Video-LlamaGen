@@ -17,9 +17,13 @@ Lumen5
 *.zip
 *.ckpt 
 *.bin
+infer_results
+torch*
 
 
 dataset/Image_Datasets/civitai_v1_10000
+dataset/Image_Datasets
+dataset/storage_datasets_npy
 dataset/Image_Datasets/train
 dataset/Image_Datasets/useless
 dataset/Image_Datasets/civitai_v1_1940032.json
@@ -28,6 +32,7 @@ Causal-Video-VAE
 pretrained_models
 results
 cloud_path
+.vscode
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
