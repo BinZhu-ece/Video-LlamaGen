@@ -51,7 +51,9 @@ if __name__ == "__main__":
 
     print(f"Folder sizes saved to {output_file}")
 
+
     """
+    
     cd /storage/zhubin/LlamaGen/
     python du_sh_map.py
     
